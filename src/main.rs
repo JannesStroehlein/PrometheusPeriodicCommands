@@ -13,12 +13,14 @@ use log::{debug, info, trace, warn};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
+use regex::Regex;
 use simple_logger::SimpleLogger;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+use std::{io, thread};
+use tokio::runtime;
 
 // Taken from the Prometheus sample code
 pub struct AppState {
@@ -26,7 +28,7 @@ pub struct AppState {
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> io::Result<()> {
     // Init simple log
     SimpleLogger::new().init().unwrap();
 
@@ -68,7 +70,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(state_data.clone())
             .service(web::resource("/metrics").route(web::get().to(metrics_handler)))
     })
-    .bind(((config.host.to_owned()), config.port))?
+    .bind((config.host.to_owned(), config.port))?
     .run()
     .await
 }
@@ -84,16 +86,13 @@ pub async fn metrics_handler(state: Data<Mutex<AppState>>) -> Result<HttpRespons
 }
 
 /// Starts the thread that handles the command targets that are defined in the config file
-fn start_tasks_worker(
-    state: Arc<Metrics>,
-    config: Arc<Schema>,
-) -> Result<thread::JoinHandle<()>, String> {
+fn start_tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) -> io::Result<()> {
     match thread::Builder::new()
         .name("Target Runner Background task".to_string())
         .spawn(move || tasks_worker(state, config.clone()))
     {
-        Err(x) => Err(x.to_string()),
-        Ok(h) => Ok(h),
+        Err(x) => Err(x),
+        Ok(_) => Ok(()),
     }
 }
 
@@ -102,9 +101,7 @@ fn start_tasks_worker(
 /// The goal is to run the commands in a "ThreadPool" thread indefinitely with
 /// the interval between executions that is specified in the config file
 fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .unwrap();
+    let threaded_rt = runtime::Builder::new_multi_thread().build().unwrap();
 
     // Create a map of the indices
     let mut timers: HashMap<usize, Duration> = Default::default();
@@ -134,7 +131,7 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
         // Clone the state variables so that they can be moved into the "ThreadPool" thread
         let thread_state = state.clone();
         let thread_target = target.clone();
-        rt.spawn(async move {
+        threaded_rt.spawn(async move {
             match handle_command_target(&thread_state, &thread_target) {
                 Ok(_) => info!("Command executed successfully"),
                 Err(e) => warn!("Command execution failed {e}"),
@@ -166,16 +163,39 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
 /// This method is called for each command target when the timer ticks
 /// The command is executed and the output interpreted (TODO: implement RegEx logic)
 fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
-    info!("Handling command {}", target.command);
+    let regex = match Regex::new(&format!(r"(?m){}", &*target.regex)) {
+        Ok(x) => x,
+        Err(err) => return Err(err.to_string()),
+    };
+
+    info!("Handling command '{}'", target.command);
 
     let cmd = ShellCommand::new(&*target.command, "");
 
     match cmd.execute() {
-        Ok(x) => Ok(state.update_requests("echo 2", x.status.code().unwrap(), {
+        Ok(x) => {
             let stdout_str = String::from_utf8(x.stdout).unwrap();
+
             // Simply parse the stdout to an i64 and return that or explode trying
-            stdout_str.trim().parse::<i64>().unwrap()
-        })),
+            match regex.captures(stdout_str.trim()) {
+                Some(caps) => {
+                    let cap = caps
+                        .name(&*target.regex_named_group)
+                        .map_or("", |m| m.as_str());
+
+                    match cap.parse::<i64>() {
+                        Err(_) => Err(format!(
+                            "Could not parse capture to i64.\nCaptures: {caps:?}"
+                        )),
+                        Ok(c) => {
+                            state.update_requests(&*target.command, x.status.code().unwrap(), c);
+                            Ok(())
+                        }
+                    }
+                }
+                None => Err("RegEx did not find any captures in stdout".to_string()),
+            }
+        }
         Err(_) => Err("Error executing command".to_string()),
     }
 }
