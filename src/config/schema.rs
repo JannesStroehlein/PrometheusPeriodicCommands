@@ -1,4 +1,4 @@
-﻿use duration_string::DurationString;
+use duration_string::DurationString;
 use serde::{Deserialize, Serialize};
 
 /// The config file schema
@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Schema {
     pub targets: Vec<CommandTarget>,
     pub host: String,
-    pub port: u16
+    pub port: u16,
 }
 
 /// A command that should be executed and parsed
