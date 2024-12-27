@@ -8,15 +8,13 @@ use crate::prometheus::Metrics;
 use crate::shell_commands::ShellCommand;
 use actix_web::middleware::Compress;
 use actix_web::web::Data;
-use actix_web::{web, App, HttpResponse, HttpServer, Responder, Result};
+use actix_web::{web, App, HttpResponse, HttpServer, Result};
 use log::{debug, info, trace, warn};
 use prometheus_client::encoding::text::encode;
-use prometheus_client::encoding::{EncodeLabelSet, EncodeLabelValue};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
 use simple_logger::SimpleLogger;
-use std::collections::{HashMap, HashSet};
-use std::ops::Deref;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
@@ -59,7 +57,7 @@ async fn main() -> std::io::Result<()> {
     info!("Starting Web Server on {}:{}", config.host, config.port);
 
     match start_tasks_worker(metrics.clone().into_inner(), config.clone()) {
-        Ok(s) => info!("Started background thread"),
+        Ok(_) => info!("Started background thread"),
         Err(x) => panic!("Could not start background thread {x}"),
     }
 
@@ -148,7 +146,7 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
         let duration_copy = *duration;
 
         {
-            let mut timer_values_mut = timers.values_mut();
+            let timer_values_mut = timers.values_mut();
 
             for value in timer_values_mut {
                 *value -= duration_copy;
@@ -156,10 +154,10 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
         }
 
         let target_interval: Duration = target.run_every.clone().into();
-        let mut current_duration = timers.get_mut(&index).unwrap();
+        let current_duration = timers.get_mut(&index).unwrap();
         *current_duration = target_interval;
         debug!(
-            "Reset target {} to duration {}",
+            "Reset target '{}' to duration {}",
             target.command, target.run_every
         );
     }
