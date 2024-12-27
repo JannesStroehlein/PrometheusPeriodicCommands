@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct Schema {
-    pub targets: Vec<CommandTarget>
+    pub targets: Vec<CommandTarget>,
+    pub host: String,
+    pub port: u16
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]

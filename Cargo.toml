@@ -9,3 +9,6 @@ prometheus-client = "0.22.3"
 serde = { version = "1.0.216", features = ["derive"] }
 serde_yaml = "0.9.34+deprecated"
 duration-string = { version = "0.3.0", features = ["serde"] }
+shellexpand = "3.0"
+log = { version = "0.4.22", features = ["max_level_debug", "release_max_level_warn"] }
+simple_logger = "5.0.0"

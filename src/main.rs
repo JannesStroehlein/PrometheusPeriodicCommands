@@ -2,19 +2,20 @@ mod shell_commands;
 mod prometheus;
 mod config;
 
-use std::ptr::null;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
+use std::time::Duration;
 use actix_web::middleware::Compress;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder, Result};
-use actix_web::cookie::time::format_description::well_known::iso8601::Config;
-use actix_web::rt::task::JoinHandle;
 use actix_web::web::Data;
+use log::{debug, info, trace};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::encoding::{EncodeLabelSet, EncodeLabelValue};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
+use simple_logger::SimpleLogger;
 use crate::config::read_cfg;
 use crate::config::Schema::{CommandTarget, Schema};
 use crate::prometheus::Metrics;
@@ -29,6 +30,16 @@ const BIND_PORT : u16 = 8080;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Init simple log
+    SimpleLogger::new().init().unwrap();
+
+    // Read the config
+    let config : Arc<Schema>= match read_cfg() {
+        Ok(s) => Arc::new(s),
+        Err(x) => panic!("Could not read config: {x}")
+    };
+    trace!("Parsed config data: {config:?}");
+
     let metrics = Data::new(Metrics {
         last_output: Family::default(),
     });
@@ -42,19 +53,12 @@ async fn main() -> std::io::Result<()> {
         .register("last_output", "The last output of the command", metrics.last_output.clone());
 
     let state = Mutex::new(state);
-
     let state_data = Data::new(state);
 
-    println!("Starting Web Server on {BIND_ADDR}:{BIND_PORT}");
+    info!("Starting Web Server on {}:{}", config.host, config.port);
 
-    let config = match read_cfg() {
-        Ok(s) => s,
-        Err(x) => panic!("Could not read config: {x}")
-    };
-    println!("{:?}", config);
-
-    match start_tasks_worker(metrics.clone().into_inner(), config) {
-        Ok(s) => println!("Started background thread"),
+    match start_tasks_worker(metrics.clone().into_inner(), config.clone()) {
+        Ok(s) => info!("Started background thread"),
         Err(x) => panic!("Could not start background thread {x}")
     }
 
@@ -65,7 +69,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(state_data.clone())
             .service(web::resource("/metrics").route(web::get().to(metrics_handler)))
     })
-        .bind((BIND_ADDR, BIND_PORT))?
+        .bind(((config.host.to_owned()), config.port))?
         .run()
         .await
 }
@@ -80,19 +84,31 @@ pub async fn metrics_handler(state: web::Data<Mutex<AppState>>) -> Result<HttpRe
 }
 
 
-fn start_tasks_worker(state : Arc<Metrics>, config: Schema) -> Result<thread::JoinHandle<()>, String>{
+fn start_tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) -> Result<thread::JoinHandle<()>, String>{
 
     let handle = match thread::Builder::new()
         .name("Target Runner Background task".to_string())
-        .spawn(move || tasks_worker(state, config.clone())){
+        .spawn(move || tasks_worker(state, config)){
         Err(x) => return Err(x.to_string()),
         Ok(h) => h
     };
 
     Ok(handle)
 }
-fn tasks_worker(state : Arc<Metrics>, config: Schema) {
+fn tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) {
+    let mut timers : HashMap<usize, Duration> = Default::default();
+
+    for (index, target) in config.targets.iter().enumerate() {
+        timers.insert(index, target.run_every.into());
+    }
+
+    debug!("Timers: {timers:?}");
+
+
     loop {
+        // Find the next timer to wait for
+        timers.iter().min_by(|a, b| a.cmp(b) );
+
         for t in config.targets.clone() {
             sleep(t.run_every.into());
 
@@ -103,7 +119,7 @@ fn tasks_worker(state : Arc<Metrics>, config: Schema) {
 }
 
 fn handle_target(state : &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
-    println!("Handling command {}", target.command);
+    info!("Handling command {}", target.command);
     let cmd = ShellCommand::new(&*target.command, "");
     match cmd.execute() {
         Ok(x) => Ok(state.update_requests("echo 2", x.status.code().unwrap(), {
