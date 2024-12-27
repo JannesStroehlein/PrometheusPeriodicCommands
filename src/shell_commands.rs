@@ -44,7 +44,7 @@ impl ShellCommand {
 
 #[cfg(test)]
 mod tests {
-    use crate::ShellCommands::ShellCommand;
+    use crate::shell_commands::ShellCommand;
 
     #[test]
     fn test_successful_command() {

@@ -1,0 +1,6 @@
+﻿targets:
+  - command: echo 2
+    regex: '(?P<result>.*?)'
+    regex_named_group: "result"
+    success_exit_codes: [0]
+    run_every: 5s
