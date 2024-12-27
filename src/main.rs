@@ -16,7 +16,7 @@ use prometheus_client::encoding::{EncodeLabelSet, EncodeLabelValue};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
 use crate::config::read_cfg;
-use crate::config::schema::{CommandTarget, Schema};
+use crate::config::Schema::{CommandTarget, Schema};
 use crate::prometheus::Metrics;
 use crate::shell_commands::ShellCommand;
 

@@ -1,13 +1,12 @@
 ﻿use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use crate::config::schema::Schema;
 
-pub mod schema;
+pub mod Schema;
 
 const CONFIG_FILE : &str = "G:\\Rust\\PrometheusPeriodicCommands\\config.yaml";
 
-pub fn read_cfg() -> Result<Schema, String> {
+pub fn read_cfg() -> Result<Schema::Schema, String> {
     if !Path::new(CONFIG_FILE).exists() {
         return Err("The config file could not be found".parse().unwrap());
     }
@@ -24,7 +23,7 @@ pub fn read_cfg() -> Result<Schema, String> {
         Ok(_) => {}
     };
 
-    let read_config : Schema = match serde_yaml::from_str(&file_str) {
+    let read_config : Schema::Schema = match serde_yaml::from_str(&file_str) {
         Ok(x) => x,
         Err(err) => return Err(err.to_string())
     };

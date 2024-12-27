@@ -35,7 +35,7 @@ impl ShellCommand {
     }
 
     #[cfg(target_os = "linux")]
-    fn execute_core(self) -> actix_web::Result<String, CommandErrorResult> {
+    fn execute_core(self) -> io::Result<Output> {
         Command::new("sh")
             .args(["-c", &*format!("{} {}", self.command, self.arguments).to_string()])
             .output()
