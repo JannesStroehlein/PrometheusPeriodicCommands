@@ -22,6 +22,7 @@ use crate::config::schema::{CommandTarget, Schema};
 use crate::prometheus::Metrics;
 use crate::shell_commands::ShellCommand;
 
+// Taken from the Prometheus sample code
 pub struct AppState {
     pub registry: Registry,
 }
@@ -72,7 +73,8 @@ async fn main() -> std::io::Result<()> {
         .await
 }
 
-pub async fn metrics_handler(state: web::Data<Mutex<AppState>>) -> Result<HttpResponse> {
+/// This method is called when the /metrics endpoint is requested. Respond with the prometheus metrics
+pub async fn metrics_handler(state: Data<Mutex<AppState>>) -> Result<HttpResponse> {
     let state = state.lock().unwrap();
     let mut body = String::new();
     encode(&mut body, &state.registry).unwrap();
@@ -82,31 +84,35 @@ pub async fn metrics_handler(state: web::Data<Mutex<AppState>>) -> Result<HttpRe
 }
 
 
+/// Starts the thread that handles the command targets that are defined in the config file
 fn start_tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) -> Result<thread::JoinHandle<()>, String>{
-
-    let handle = match thread::Builder::new()
+    match thread::Builder::new()
         .name("Target Runner Background task".to_string())
-        .spawn(move || tasks_worker(state, config.clone())){
-        Err(x) => return Err(x.to_string()),
-        Ok(h) => h
-    };
-
-    Ok(handle)
+        .spawn(move || tasks_worker(state, config.clone()))
+    {
+        Err(x) => Err(x.to_string()),
+        Ok(h) => Ok(h)
+    }
 }
+
+/// The actual code that runs in the command runner thread
+///
+/// The goal is to run the commands in a "ThreadPool" thread indefinitely with
+/// the interval between executions that is specified in the config file
 fn tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .build().unwrap();
 
+    // Create a map of the indices
     let mut timers : HashMap<usize, Duration> = Default::default();
 
     for (index, target) in config.targets.iter().enumerate() {
         timers.insert(index, target.run_every.into());
     }
 
-    debug!("Timers: {timers:?}");
 
+    // 🤡
     let config_deref = config.clone();
-
     loop {
 
         // Find the next timer to wait for
@@ -124,15 +130,18 @@ fn tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) {
         sleep(*duration);
         debug!("Finished waiting for target '{}'", target.command);
 
+        // Clone the state variables so that they can be moved into the "ThreadPool" thread
         let thread_state = state.clone();
         let thread_target = target.clone();
         rt.spawn(async move {
-            match handle_target(&thread_state, &thread_target) {
+            match handle_command_target(&thread_state, &thread_target) {
                 Ok(_) => info!("Command executed successfully"),
                 Err(e) => warn!("Command execution failed {e}")
             };
         });
 
+        // Deduct the time slept from all durations and set the duration of the timer we waited for
+        // back to its config value
         let duration_copy = *duration;
 
         {
@@ -150,7 +159,9 @@ fn tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) {
     }
 }
 
-fn handle_target(state : &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
+/// This method is called for each command target when the timer ticks
+/// The command is executed and the output interpreted (TODO: implement RegEx logic)
+fn handle_command_target(state : &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
     info!("Handling command {}", target.command);
 
     let cmd = ShellCommand::new(&*target.command, "");
@@ -158,6 +169,7 @@ fn handle_target(state : &Arc<Metrics>, target: &CommandTarget) -> Result<(), St
     match cmd.execute() {
         Ok(x) => Ok(state.update_requests("echo 2", x.status.code().unwrap(), {
             let stdout_str = String::from_utf8(x.stdout).unwrap();
+            // Simply parse the stdout to an i64 and return that or explode trying
             stdout_str.trim().parse::<i64>().unwrap()
         })),
         Err(_) => Err("Error executing command".to_string())
