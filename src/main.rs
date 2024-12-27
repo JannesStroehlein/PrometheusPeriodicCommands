@@ -123,17 +123,17 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
 
         let target: CommandTarget = config_deref.targets[index].clone();
 
-        debug!("Waiting for next target '{}'", target.command);
+        trace!("Waiting for next target '{}'", target.command);
         // Sleep for the duration
         sleep(*duration);
-        debug!("Finished waiting for target '{}'", target.command);
+        trace!("Finished waiting for target '{}'", target.command);
 
         // Clone the state variables so that they can be moved into the "ThreadPool" thread
         let thread_state = state.clone();
         let thread_target = target.clone();
         threaded_rt.spawn(async move {
-            match handle_command_target(&thread_state, &thread_target) {
-                Ok(_) => info!("Command executed successfully"),
+            match handle_command_target(&thread_state, &thread_target).await {
+                Ok(_) => trace!("Command executed successfully"),
                 Err(e) => warn!("Command execution failed {e}"),
             };
         });
@@ -153,16 +153,17 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
         let target_interval: Duration = target.run_every.clone().into();
         let current_duration = timers.get_mut(&index).unwrap();
         *current_duration = target_interval;
-        debug!(
+        trace!(
             "Reset target '{}' to duration {}",
-            target.command, target.run_every
+            target.command,
+            target.run_every
         );
     }
 }
 
 /// This method is called for each command target when the timer ticks
-/// The command is executed and the output interpreted (TODO: implement RegEx logic)
-fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
+/// The command is executed and the output interpreted
+async fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
     let regex = match Regex::new(&format!(r"(?m){}", &*target.regex)) {
         Ok(x) => x,
         Err(err) => return Err(err.to_string()),
@@ -172,7 +173,7 @@ fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> Result
 
     let cmd = ShellCommand::new(&*target.command, "");
 
-    match cmd.execute() {
+    match cmd.execute().await {
         Ok(x) => {
             let stdout_str = String::from_utf8(x.stdout).unwrap();
 

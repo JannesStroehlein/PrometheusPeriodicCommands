@@ -1,5 +1,6 @@
 use std::io;
-use std::process::{Command, Output};
+use std::process::Output;
+use tokio::process::Command;
 
 #[derive(Debug)]
 pub struct ShellCommand {
@@ -15,20 +16,21 @@ impl ShellCommand {
         }
     }
 
-    pub fn execute(self) -> io::Result<Output> {
-        let res = self.execute_core();
+    pub async fn execute(self) -> io::Result<Output> {
+        let res = self.execute_core().await;
 
         res
     }
 
     #[cfg(target_os = "windows")]
-    fn execute_core(self) -> io::Result<Output> {
+    async fn execute_core(self) -> io::Result<Output> {
         Command::new("cmd")
             .args([
                 "/C",
                 &*format!("{} {}", self.command, self.arguments).to_string(),
             ])
             .output()
+            .await
     }
 
     #[cfg(target_os = "linux")]

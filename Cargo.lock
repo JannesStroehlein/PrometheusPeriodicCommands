@@ -10,6 +10,7 @@ dependencies = [
  "duration-string",
  "log",
  "prometheus-client",
+ "regex",
  "serde",
  "serde_yaml",
  "shellexpand",
