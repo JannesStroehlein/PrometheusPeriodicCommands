@@ -3,6 +3,7 @@ mod prometheus;
 mod config;
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
@@ -10,23 +11,20 @@ use std::time::Duration;
 use actix_web::middleware::Compress;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder, Result};
 use actix_web::web::Data;
-use log::{debug, info, trace};
+use log::{debug, info, trace, warn};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::encoding::{EncodeLabelSet, EncodeLabelValue};
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
 use simple_logger::SimpleLogger;
 use crate::config::read_cfg;
-use crate::config::Schema::{CommandTarget, Schema};
+use crate::config::schema::{CommandTarget, Schema};
 use crate::prometheus::Metrics;
 use crate::shell_commands::ShellCommand;
 
 pub struct AppState {
     pub registry: Registry,
 }
-
-const BIND_ADDR : &str = "127.0.0.1";
-const BIND_PORT : u16 = 8080;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -88,7 +86,7 @@ fn start_tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) -> Result<threa
 
     let handle = match thread::Builder::new()
         .name("Target Runner Background task".to_string())
-        .spawn(move || tasks_worker(state, config)){
+        .spawn(move || tasks_worker(state, config.clone())){
         Err(x) => return Err(x.to_string()),
         Ok(h) => h
     };
@@ -96,6 +94,9 @@ fn start_tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) -> Result<threa
     Ok(handle)
 }
 fn tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build().unwrap();
+
     let mut timers : HashMap<usize, Duration> = Default::default();
 
     for (index, target) in config.targets.iter().enumerate() {
@@ -104,23 +105,56 @@ fn tasks_worker(state : Arc<Metrics>, config: Arc<Schema>) {
 
     debug!("Timers: {timers:?}");
 
+    let config_deref = config.clone();
 
     loop {
+
         // Find the next timer to wait for
-        timers.iter().min_by(|a, b| a.cmp(b) );
+        let next_timer = { timers.iter().min_by_key(|&(_, &duration)| duration) };
 
-        for t in config.targets.clone() {
-            sleep(t.run_every.into());
+        let (index, duration) = match next_timer {
+            Some((index, duration)) => (*index, duration),
+            None => continue
+        };
 
-            handle_target(&state, &t).unwrap()
+        let target : CommandTarget = config_deref.targets[index].clone();
+
+        debug!("Waiting for next target '{}'", target.command);
+        // Sleep for the duration
+        sleep(*duration);
+        debug!("Finished waiting for target '{}'", target.command);
+
+        let thread_state = state.clone();
+        let thread_target = target.clone();
+        rt.spawn(async move {
+            match handle_target(&thread_state, &thread_target) {
+                Ok(_) => info!("Command executed successfully"),
+                Err(e) => warn!("Command execution failed {e}")
+            };
+        });
+
+        let duration_copy = *duration;
+
+        {
+            let mut timer_values_mut = timers.values_mut();
+
+            for value in timer_values_mut {
+                *value -= duration_copy;
+            }
         }
 
+        let target_interval : Duration = target.run_every.clone().into();
+        let mut current_duration = timers.get_mut(&index).unwrap();
+        *current_duration = target_interval;
+        debug!("Reset target {} to duration {}", target.command, target.run_every);
     }
 }
 
 fn handle_target(state : &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
     info!("Handling command {}", target.command);
+
     let cmd = ShellCommand::new(&*target.command, "");
+
     match cmd.execute() {
         Ok(x) => Ok(state.update_requests("echo 2", x.status.code().unwrap(), {
             let stdout_str = String::from_utf8(x.stdout).unwrap();

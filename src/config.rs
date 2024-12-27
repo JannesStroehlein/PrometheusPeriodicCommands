@@ -3,11 +3,11 @@ use std::io::Read;
 use std::path::Path;
 use log::debug;
 
-pub mod Schema;
+pub mod schema;
 
 const CONFIG_FILE_DIR_NAME : &str = "prometheus_periodic_commands";
 
-pub fn read_cfg() -> Result<Schema::Schema, String> {
+pub fn read_cfg() -> Result<schema::Schema, String> {
     let found_config_path = explore_config_file_paths();
     debug!("Found config file in '{found_config_path}'");
 
@@ -23,7 +23,7 @@ pub fn read_cfg() -> Result<Schema::Schema, String> {
         Ok(_) => {}
     };
 
-    let read_config : Schema::Schema = match serde_yaml::from_str(&file_str) {
+    let read_config : schema::Schema = match serde_yaml::from_str(&file_str) {
         Ok(x) => x,
         Err(err) => return Err(err.to_string())
     };
@@ -46,8 +46,8 @@ fn explore_config_file_paths() -> String {
 
     #[cfg(target_os = "windows")]
     let os_specific_config_dirs  = [
-        "",
-        ""
+        format!("~\\AppData\\Local\\{CONFIG_FILE_DIR_NAME}"),
+        "".to_string()
     ];
 
     // check current dir
