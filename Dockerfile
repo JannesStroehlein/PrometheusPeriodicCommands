@@ -1,46 +1,26 @@
-﻿####################################################################################################
-## Builder
-####################################################################################################
-FROM rust:latest AS builder
+﻿FROM lukemathwalker/cargo-chef:latest-rust-alpine AS chef
+WORKDIR /app
 
-RUN rustup target add x86_64-unknown-linux-musl
-RUN apt update && apt install -y musl-tools musl-dev
-RUN update-ca-certificates
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Create appuser
-ENV USER=ppc
-ENV UID=10001
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Notice that we are specifying the --target flag!
+RUN cargo chef cook --release --target x86_64-unknown-linux-musl --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --target x86_64-unknown-linux-musl --bin PrometheusPeriodicCommands
 
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    "${USER}"
+FROM alpine AS runtime
+RUN addgroup -S ppc && adduser -S ppc -G ppc
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/PrometheusPeriodicCommands /usr/local/bin/
+USER ppc
 
-
-WORKDIR /PrometheusPeriodicCommands
-
-COPY ./ .
-
-RUN cargo build --target x86_64-unknown-linux-musl --release
-
-####################################################################################################
-## Final image
-####################################################################################################
-FROM scratch
-
-# Import from builder.
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-
-WORKDIR /PrometheusPeriodicCommands
-
-# Copy our build
-COPY --from=builder /PrometheusPeriodicCommands/target/x86_64-unknown-linux-musl/release/PrometheusPeriodicCommands ./
-
-# Use an unprivileged user.
-USER ppc:ppc
-
-CMD ["/PrometheusPeriodicCommands/PrometheusPeriodicCommands"]
+LABEL org.opencontainers.image.title="Prometheus Periodic Commands"
+LABEL org.opencontainers.image.url="https://github.com/JannesStroehlein/PrometheusPeriodicCommands"
+LABEL org.opencontainers.image.description="This container can be configured to run specific commands in an intervall, parse their output and expose the parsed values as numeric gauges to Prometheus."
+LABEL org.opencontainers.image.documentation="https://github.com/JannesStroehlein/PrometheusPeriodicCommands/README.md"
+LABEL org.opencontainers.image.source="https://github.com/JannesStroehlein/PrometheusPeriodicCommands"
+LABEL org.opencontainers.image.authors="jannes@j3s.dev"
+ENTRYPOINT ["/usr/local/bin/PrometheusPeriodicCommands"]

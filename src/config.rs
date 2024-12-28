@@ -1,4 +1,5 @@
-use log::debug;
+use crate::cli::CliArgs;
+use log::{debug, error, info, warn};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -7,26 +8,73 @@ pub mod schema;
 
 const CONFIG_FILE_DIR_NAME: &str = "prometheus_periodic_commands";
 
-pub fn read_cfg() -> Result<schema::Schema, String> {
-    let found_config_path = explore_config_file_paths();
-    debug!("Found config file in '{found_config_path}'");
+/// Attempts to find the config file in one of the OS specific paths.
+///
+/// ### Cli Args
+/// If the config path is specified in the cli arguments, it will have priority over
+/// the OS specific paths.
+/// Any cli overrides (host, port) will be applied to the config read from the file before it
+/// is returned by this function.
+pub fn read_cfg(cli_args: &CliArgs) -> Result<schema::Schema, String> {
+    let found_config_path = {
+        if cli_args.config_file == None {
+            explore_config_file_paths()
+        } else {
+            cli_args.config_file.clone().unwrap()
+        }
+    };
+
+    if !Path::new(&found_config_path).exists() {
+        error!("The specified config path does not point to a file.");
+        return Err("Config file could be found".to_string());
+    }
+
+    info!("Loading config file: '{found_config_path}'");
 
     let mut file = match File::open(found_config_path) {
         Err(e) => return Err(e.to_string()),
         Ok(x) => x,
     };
 
-    let mut file_str = String::new();
-
-    match file.read_to_string(&mut file_str) {
+    // Read the file to a Vec<u8>
+    let mut file_buf: Vec<u8> = vec![];
+    match file.read_to_end(&mut file_buf) {
+        Ok(size) => debug!("Read {size} bytes from the config file"),
         Err(e) => return Err(e.to_string()),
-        Ok(_) => {}
     };
 
-    let read_config: schema::Schema = match serde_yaml::from_str(&file_str) {
+    if file_buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        // Remove the first three bytes (the BOM)
+        file_buf = file_buf[3..].to_vec();
+        warn!("Stripped the BOM of the config file");
+    }
+
+    let file_str = String::from_utf8(file_buf).expect("Could not read the file contents");
+
+    let mut read_config: schema::Schema = match serde_yaml::from_str(&file_str) {
         Ok(x) => x,
         Err(err) => return Err(err.to_string()),
     };
+
+    let config_host = read_config.host.clone();
+    let config_port = read_config.port.clone();
+
+    read_config.host = match cli_args.host.clone() {
+        None => config_host,
+        Some(cli_host) => {
+            debug!("Config host value was overridden by cli argument");
+            cli_host
+        }
+    };
+
+    read_config.port = match cli_args.port {
+        None => config_port,
+        Some(cli_port) => {
+            debug!("Config port value was overridden by cli argument");
+            cli_port
+        }
+    };
+
     Ok(read_config)
 }
 
@@ -44,7 +92,7 @@ fn explore_config_file_paths() -> String {
     #[cfg(target_os = "windows")]
     let os_specific_config_dirs = [
         format!("~\\AppData\\Local\\{CONFIG_FILE_DIR_NAME}"),
-        "".to_string(),
+        String::from(""),
     ];
 
     // check current dir
