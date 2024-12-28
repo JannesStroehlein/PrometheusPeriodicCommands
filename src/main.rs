@@ -194,7 +194,7 @@ async fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> 
 
                     match cap.parse::<f64>() {
                         Err(_) => Err(format!(
-                            "Could not parse capture to f64.\nCaptures: {caps:?}"
+                            "Could not parse capture to f64.\nCaptures: {caps:?}\nStdout:{stdout_str}"
                         )),
                         Ok(c) => {
                             state.update_requests(&*target.command, x.status.code().unwrap(), c);
