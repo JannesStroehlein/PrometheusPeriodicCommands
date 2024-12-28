@@ -1,13 +1,17 @@
 ﻿# Prometheus Periodic Commands
 
 <div align="center">
+<p>
     <a href="#example-use-case">Example Use-Case</a> •
     <a href="#features">Features</a> •
     <a href="#installation">Installation</a> •
     <a href="#configuration">Configuration</a> •
     <a href="#license">License</a> •
     <a href="#acknowledgments">Acknowledgments</a>
+</p>
 </div>
+
+[![Create and publish a Docker image](https://github.com/JannesStroehlein/PrometheusPeriodicCommands/actions/workflows/main.yml/badge.svg)](https://github.com/JannesStroehlein/PrometheusPeriodicCommands/actions/workflows/main.yml)
 
 This tiny Rust program periodically runs commands that are specified in a config file
 and parses the output of the commands using a RegEx. The output will be exposed as a
@@ -76,7 +80,7 @@ docker run -d \
   --host 127.0.0.1 --port 8080
 ```
 
-> [!tip] Docker Compose
+> [!TIP]
 > Use the [pre-made docker compose file](docker-compose.yml) as your starting point.
 
 **The Prometheus metrics are exposed under: `host:port/metrics`**
