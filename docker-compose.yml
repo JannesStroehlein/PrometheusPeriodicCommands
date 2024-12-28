@@ -1,6 +1,6 @@
 ﻿services:
   prometheus-periodic-commands:
-    image: promcmd:latest
+    image: ghcr.io/jannesstroehlein/prometheusperiodiccommands:main
     ports:
       - "8080:8081"
     volumes:
