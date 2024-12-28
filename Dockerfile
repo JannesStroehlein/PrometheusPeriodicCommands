@@ -14,6 +14,7 @@ RUN cargo build --release --target x86_64-unknown-linux-musl --bin PrometheusPer
 
 FROM alpine AS runtime
 RUN addgroup -S ppc && adduser -S ppc -G ppc
+RUN apk add openrc openssh
 COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/PrometheusPeriodicCommands /usr/local/bin/
 USER ppc
 
