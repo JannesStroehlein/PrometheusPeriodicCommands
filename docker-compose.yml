@@ -1,0 +1,9 @@
+﻿services:
+  prometheus-periodic-commands:
+    image: promcmd:latest
+    ports:
+      - "8080:8081"
+    volumes:
+      # Mount the example config file in the root of the repo inside the container
+      - ./config.yaml:/etc/prometheus_periodic_commands/config.yaml
+    command: "--host 0.0.0.0 --port 8081"

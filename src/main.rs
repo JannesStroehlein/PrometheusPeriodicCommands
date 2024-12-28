@@ -1,7 +1,9 @@
+mod cli;
 mod config;
 mod prometheus;
 mod shell_commands;
 
+use crate::cli::CliArgs;
 use crate::config::read_cfg;
 use crate::config::schema::{CommandTarget, Schema};
 use crate::prometheus::Metrics;
@@ -9,7 +11,8 @@ use crate::shell_commands::ShellCommand;
 use actix_web::middleware::Compress;
 use actix_web::web::Data;
 use actix_web::{web, App, HttpResponse, HttpServer, Result};
-use log::{debug, info, trace, warn};
+use clap::Parser;
+use log::{info, trace, warn};
 use prometheus_client::encoding::text::encode;
 use prometheus_client::metrics::family::Family;
 use prometheus_client::registry::Registry;
@@ -32,8 +35,10 @@ async fn main() -> io::Result<()> {
     // Init simple log
     SimpleLogger::new().init().unwrap();
 
+    let cli_args = CliArgs::parse();
+
     // Read the config
-    let config: Arc<Schema> = match read_cfg() {
+    let config: Arc<Schema> = match read_cfg(&cli_args) {
         Ok(s) => Arc::new(s),
         Err(x) => panic!("Could not read config: {x}"),
     };
@@ -101,7 +106,10 @@ fn start_tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) -> io::Result<()
 /// The goal is to run the commands in a "ThreadPool" thread indefinitely with
 /// the interval between executions that is specified in the config file
 fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
-    let threaded_rt = runtime::Builder::new_multi_thread().build().unwrap();
+    let threaded_rt = runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()
+        .unwrap();
 
     // Create a map of the indices
     let mut timers: HashMap<usize, Duration> = Default::default();
@@ -177,16 +185,16 @@ async fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> 
         Ok(x) => {
             let stdout_str = String::from_utf8(x.stdout).unwrap();
 
-            // Simply parse the stdout to an i64 and return that or explode trying
+            // Simply parse the stdout to a f64 and return that or explode trying
             match regex.captures(stdout_str.trim()) {
                 Some(caps) => {
                     let cap = caps
                         .name(&*target.regex_named_group)
                         .map_or("", |m| m.as_str());
 
-                    match cap.parse::<i64>() {
+                    match cap.parse::<f64>() {
                         Err(_) => Err(format!(
-                            "Could not parse capture to i64.\nCaptures: {caps:?}"
+                            "Could not parse capture to f64.\nCaptures: {caps:?}"
                         )),
                         Ok(c) => {
                             state.update_requests(&*target.command, x.status.code().unwrap(), c);
