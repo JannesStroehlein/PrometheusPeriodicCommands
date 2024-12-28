@@ -76,7 +76,7 @@ docker run -d \
   --host 127.0.0.1 --port 8080
 ```
 
-> [!tip] Docker Compose
+> [!TIP]
 > Use the [pre-made docker compose file](docker-compose.yml) as your starting point.
 
 **The Prometheus metrics are exposed under: `host:port/metrics`**
