@@ -1,5 +1,7 @@
 use crate::cli::CliArgs;
+use crate::config::schema::Schema;
 use log::{debug, error, info, warn};
+use regex::bytes::Regex;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -75,6 +77,9 @@ pub fn read_cfg(cli_args: &CliArgs) -> Result<schema::Schema, String> {
         }
     };
 
+    validate_config_labels(&read_config);
+    validate_config_regex(&read_config);
+
     Ok(read_config)
 }
 
@@ -126,4 +131,143 @@ fn explore_config_file_paths() -> String {
     }
 
     panic!("Could not find any valid config file in common paths.");
+}
+
+/// ## Panics
+/// If a name in the config file contains any illegal character according to
+/// https://prometheus.io/docs/concepts/data_model/
+fn validate_config_labels(config: &Schema) {
+    let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
+    for target in &config.targets {
+        if !re.is_match((&target.name).as_ref()) {
+            panic!(
+                "Found illegal character in command target name.
+            '{}' did not match the RegEx specified by the Prometheus specifications.
+            More information can be found here: https://prometheus.io/docs/concepts/data_model/",
+                target.name
+            );
+        }
+    }
+}
+
+/// ## Panics
+/// If any regex in the config is not able to be built.
+fn validate_config_regex(config: &Schema) {
+    for target in &config.targets {
+        match Regex::new(&*target.regex) {
+            Ok(re) => re,
+            Err(err) => panic!(
+                "Could not build RegEx for target '{}'
+             Error: {}",
+                target.name,
+                err.to_string()
+            ),
+        };
+
+        let group_signature = format!("(?<{}>", target.regex_named_group);
+        if !&target.regex.contains(&group_signature) {
+            panic!(
+                "The RegEx of target '{}' does not contain a group called '{}'",
+                target.name, target.regex_named_group
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::CommandTarget;
+
+    #[test]
+    fn validate_config_labels_valid() {
+        let config = Schema {
+            targets: vec![CommandTarget {
+                name: "valid_name".to_string(),
+                command: "".to_string(),
+                regex: "".to_string(),
+                regex_named_group: "".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        validate_config_labels(&config);
+    }
+    #[test]
+    #[should_panic]
+    fn validate_config_labels_invalid() {
+        let config = Schema {
+            targets: vec![CommandTarget {
+                name: "\"\"\"dasdassd-_3213$$212".to_string(),
+                command: "".to_string(),
+                regex: "".to_string(),
+                regex_named_group: "".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        validate_config_labels(&config);
+    }
+
+    #[test]
+    fn validate_config_regex_valid() {
+        let config = Schema {
+            targets: vec![CommandTarget {
+                name: "".to_string(),
+                command: "".to_string(),
+                regex: "(?<result>.*)".to_string(),
+                regex_named_group: "result".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        validate_config_regex(&config);
+    }
+
+    #[test]
+    #[should_panic]
+    fn validate_config_regex_invalid_regex() {
+        let config = Schema {
+            targets: vec![CommandTarget {
+                name: "".to_string(),
+                command: "".to_string(),
+                regex: "(?<result.*)".to_string(),
+                regex_named_group: "result".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        validate_config_regex(&config);
+    }
+
+    #[test]
+    #[should_panic]
+    fn validate_config_regex_missing_group() {
+        let config = Schema {
+            targets: vec![CommandTarget {
+                name: "".to_string(),
+                command: "".to_string(),
+                regex: "(.*)".to_string(),
+                regex_named_group: "result".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        validate_config_regex(&config);
+    }
 }

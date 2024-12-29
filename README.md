@@ -12,6 +12,7 @@
 </div>
 
 [![Create and publish a Docker image](https://github.com/JannesStroehlein/PrometheusPeriodicCommands/actions/workflows/main.yml/badge.svg)](https://github.com/JannesStroehlein/PrometheusPeriodicCommands/actions/workflows/main.yml)
+[![Release](https://github.com/JannesStroehlein/PrometheusPeriodicCommands/actions/workflows/release.yml/badge.svg)](https://github.com/JannesStroehlein/PrometheusPeriodicCommands/actions/workflows/release.yml)
 
 This tiny Rust program periodically runs commands that are specified in a config file
 and parses the output of the commands using a RegEx. The output will be exposed as a
@@ -110,8 +111,10 @@ port: 8080
 
 # A list of all commands to execute and parse
 targets:
-  # A shell command (Windows cmd, Linux: Bash)
-  - command: echo 2
+  # The name of the command. This will be a label in Prometheus.
+  - name: echo
+    # A shell command (Windows cmd, Linux: Bash)
+    command: echo 2
     # Specify the RegEx to parse the standard output of the command
     # The regex must include at least one named group (which needs to be specified below)
     # which is used to extract a numeric value from the command output

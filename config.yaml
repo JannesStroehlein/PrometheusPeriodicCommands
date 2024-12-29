@@ -1,26 +1,30 @@
 host: 127.0.0.1
 port: 8080
 targets:
-  - command: echo 42
+  - name: "the_answer"
+    command: echo 42
     regex: '(?<result>.*)'
     regex_named_group: result
-    success_exit_codes: [0]
+    success_exit_codes: [ 0 ]
     run_every: 4s
 
-  - command: wmic OS get FreePhysicalMemory /format:value
+  - name: "free_ram"
+    command: wmic OS get FreePhysicalMemory /format:value
     regex: 'FreePhysicalMemory=(?<result>.*)'
     regex_named_group: result
-    success_exit_codes: [0]
+    success_exit_codes: [ 0 ]
     run_every: 10s
 
-  - command: wmic cpu get loadpercentage /format:value
+  - name: "cpu_utilization"
+    command: wmic cpu get loadpercentage /format:value
     regex: 'LoadPercentage=(?<result>.*)'
     regex_named_group: result
-    success_exit_codes: [0]
+    success_exit_codes: [ 0 ]
     run_every: 2s
 
-  - command: "wmic LogicalDisk where DeviceID='G:' Get FreeSpace /value"
+  - name: "g_free_disk_space"
+    command: "wmic LogicalDisk where DeviceID='G:' Get FreeSpace /value"
     regex: 'FreeSpace=(?<result>.*)'
     regex_named_group: result
-    success_exit_codes: [0]
+    success_exit_codes: [ 0 ]
     run_every: 25s

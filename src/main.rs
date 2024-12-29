@@ -45,7 +45,8 @@ async fn main() -> io::Result<()> {
     trace!("Parsed config data: {config:?}");
 
     let metrics = Data::new(Metrics {
-        last_output: Family::default(),
+        last_result: Family::default(),
+        last_duration: Family::default(),
     });
 
     let mut state = AppState {
@@ -53,9 +54,15 @@ async fn main() -> io::Result<()> {
     };
 
     state.registry.register(
-        "last_output",
-        "The last output of the command",
-        metrics.last_output.clone(),
+        "last_result",
+        "The last parsed result of a command target command",
+        metrics.last_result.clone(),
+    );
+
+    state.registry.register(
+        "last_duration",
+        "Number of milliseconds the last command execution took",
+        metrics.last_duration.clone(),
     );
 
     let state = Mutex::new(state);
@@ -149,7 +156,6 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
         // Deduct the time slept from all durations and set the duration of the timer we waited for
         // back to its config value
         let duration_copy = *duration;
-
         {
             let timer_values_mut = timers.values_mut();
 
@@ -181,7 +187,9 @@ async fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> 
 
     let cmd = ShellCommand::new(&*target.command, "");
 
-    match cmd.execute().await {
+    let execution_result = cmd.execute().await;
+
+    match execution_result.0 {
         Ok(x) => {
             let stdout_str = String::from_utf8(x.stdout).unwrap();
 
@@ -197,7 +205,8 @@ async fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> 
                             "Could not parse capture to f64.\nCaptures: {caps:?}\nStdout:{stdout_str}"
                         )),
                         Ok(c) => {
-                            state.update_requests(&*target.command, x.status.code().unwrap(), c);
+                            state.update_result(&target, x.status.code().unwrap(), c);
+                            state.update_duration(&target, &execution_result.1);
                             Ok(())
                         }
                     }

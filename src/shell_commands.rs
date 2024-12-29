@@ -1,6 +1,8 @@
 use std::io;
 use std::process::Output;
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::Instant;
 
 #[derive(Debug)]
 pub struct ShellCommand {
@@ -16,10 +18,10 @@ impl ShellCommand {
         }
     }
 
-    pub async fn execute(self) -> io::Result<Output> {
+    pub async fn execute(self) -> (io::Result<Output>, Duration) {
+        let start = Instant::now();
         let res = self.execute_core().await;
-
-        res
+        (res, start.elapsed())
     }
 
     #[cfg(target_os = "windows")]
