@@ -5,12 +5,13 @@ mod shell_commands;
 
 use crate::cli::CliArgs;
 use crate::config::read_cfg;
-use crate::config::schema::{CommandTarget, Schema};
-use crate::prometheus::Metrics;
+use crate::config::schema::{Schema, Target, TargetCommand};
+use crate::prometheus::TargetMetrics;
 use crate::shell_commands::ShellCommand;
 use actix_web::middleware::Compress;
 use actix_web::web::Data;
 use actix_web::{web, App, HttpResponse, HttpServer, Result};
+use clap::builder::Str;
 use clap::Parser;
 use log::{info, trace, warn};
 use prometheus_client::encoding::text::encode;
@@ -44,33 +45,41 @@ async fn main() -> io::Result<()> {
     };
     trace!("Parsed config data: {config:?}");
 
-    let metrics = Data::new(Metrics {
-        last_result: Family::default(),
-        last_duration: Family::default(),
-    });
-
     let mut state = AppState {
         registry: Registry::default(),
     };
 
-    state.registry.register(
-        "last_result",
-        "The last parsed result of a command target command",
-        metrics.last_result.clone(),
-    );
+    let mut metrics = vec![Arc::new(TargetMetrics::default()); config.targets.len()];
 
-    state.registry.register(
-        "last_duration",
-        "Number of milliseconds the last command execution took",
-        metrics.last_duration.clone(),
-    );
+    for (i, target) in config.targets.iter().enumerate() {
+        let target_metrics = Arc::new(TargetMetrics {
+            last_result: Family::default(),
+            last_duration: Family::default(),
+        });
+
+        state.registry.register(
+            format!("{}_result", target.name),
+            "The last parsed result of a command target command",
+            target_metrics.last_result.clone(),
+        );
+
+        state.registry.register(
+            format!("{}_duration", target.name),
+            "Number of milliseconds the last command execution took",
+            target_metrics.last_duration.clone(),
+        );
+
+        metrics[i] = target_metrics;
+
+        info!("Created metrics for target: {}", target.name);
+    }
 
     let state = Mutex::new(state);
     let state_data = Data::new(state);
 
     info!("Starting Web Server on {}:{}", config.host, config.port);
 
-    match start_tasks_worker(metrics.clone().into_inner(), config.clone()) {
+    match start_tasks_worker(metrics, config.clone()) {
         Ok(_) => info!("Started background thread"),
         Err(x) => panic!("Could not start background thread {x}"),
     }
@@ -78,7 +87,6 @@ async fn main() -> io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(Compress::default())
-            .app_data(metrics.clone())
             .app_data(state_data.clone())
             .service(web::resource("/metrics").route(web::get().to(metrics_handler)))
     })
@@ -98,7 +106,7 @@ pub async fn metrics_handler(state: Data<Mutex<AppState>>) -> Result<HttpRespons
 }
 
 /// Starts the thread that handles the command targets that are defined in the config file
-fn start_tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) -> io::Result<()> {
+fn start_tasks_worker(state: Vec<Arc<TargetMetrics>>, config: Arc<Schema>) -> io::Result<()> {
     match thread::Builder::new()
         .name("Target Runner Background task".to_string())
         .spawn(move || tasks_worker(state, config.clone()))
@@ -112,7 +120,7 @@ fn start_tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) -> io::Result<()
 ///
 /// The goal is to run the commands in a "ThreadPool" thread indefinitely with
 /// the interval between executions that is specified in the config file
-fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
+fn tasks_worker(state: Vec<Arc<TargetMetrics>>, config: Arc<Schema>) {
     let threaded_rt = runtime::Builder::new_multi_thread()
         .enable_io()
         .build()
@@ -136,18 +144,18 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
             None => continue,
         };
 
-        let target: CommandTarget = config_deref.targets[index].clone();
+        let target: Target = config_deref.targets[index].clone();
+        let metrics: Arc<TargetMetrics> = state[index].clone();
 
-        trace!("Waiting for next target '{}'", target.command);
+        trace!("Waiting for next target '{}'", target.name);
         // Sleep for the duration
         sleep(*duration);
-        trace!("Finished waiting for target '{}'", target.command);
+        trace!("Finished waiting for target '{}'", target.name);
 
         // Clone the state variables so that they can be moved into the "ThreadPool" thread
-        let thread_state = state.clone();
         let thread_target = target.clone();
         threaded_rt.spawn(async move {
-            match handle_command_target(&thread_state, &thread_target).await {
+            match handle_target(metrics, &thread_target).await {
                 Ok(_) => trace!("Command executed successfully"),
                 Err(e) => warn!("Command execution failed {e}"),
             };
@@ -169,7 +177,7 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
         *current_duration = target_interval;
         trace!(
             "Reset target '{}' to duration {}",
-            target.command,
+            target.name,
             target.run_every
         );
     }
@@ -177,43 +185,45 @@ fn tasks_worker(state: Arc<Metrics>, config: Arc<Schema>) {
 
 /// This method is called for each command target when the timer ticks
 /// The command is executed and the output interpreted
-async fn handle_command_target(state: &Arc<Metrics>, target: &CommandTarget) -> Result<(), String> {
+async fn handle_target(state: Arc<TargetMetrics>, target: &Target) -> Result<(), String> {
     let regex = match Regex::new(&format!(r"(?m){}", &*target.regex)) {
         Ok(x) => x,
         Err(err) => return Err(err.to_string()),
     };
 
-    info!("Handling command '{}'", target.command);
+    info!("Handling target '{}'", target.name);
 
-    let cmd = ShellCommand::new(&*target.command, "");
+    for command in target.commands.iter() {
+        match handle_target_command(state.clone(), &regex, target, command).await {
+            Ok(_) => (),
+            Err(e) => {
+                warn!(
+                    "Target: '{}' Error handling command '{}' {}",
+                    target.name, command.exec, e
+                );
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_target_command(
+    state: Arc<TargetMetrics>,
+    regex: &Regex,
+    target: &Target,
+    command: &TargetCommand,
+) -> Result<(), String> {
+    let cmd = ShellCommand::new(&*command.exec, "");
 
     let execution_result = cmd.execute().await;
 
     match execution_result.0 {
-        Ok(x) => {
-            let stdout_str = String::from_utf8(x.stdout).unwrap();
-
-            // Simply parse the stdout to a f64 and return that or explode trying
-            match regex.captures(stdout_str.trim()) {
-                Some(caps) => {
-                    let cap = caps
-                        .name(&*target.regex_named_group)
-                        .map_or("", |m| m.as_str());
-
-                    match cap.parse::<f64>() {
-                        Err(_) => Err(format!(
-                            "Could not parse capture to f64.\nCaptures: {caps:?}\nStdout:{stdout_str}"
-                        )),
-                        Ok(c) => {
-                            state.update_result(&target, x.status.code().unwrap(), c);
-                            state.update_duration(&target, &execution_result.1);
-                            Ok(())
-                        }
-                    }
-                }
-                None => Err("RegEx did not find any captures in stdout".to_string()),
-            }
-        }
+        Ok(x) => match state.update_result(&target, &command, &regex, &x, &execution_result.1) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(format!("Error updating result: {}", e)),
+        },
         Err(_) => Err("Error executing command".to_string()),
     }
 }

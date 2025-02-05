@@ -64,6 +64,14 @@ cargo install
 
 ### Docker Installation
 
+> [!warn]
+> You most likely need to create your own Dockerfile to use this tool.
+> The included Dockerfile is only for building the tool with minimal dependencies.
+> That means the shell commands that are executed inside the container are very
+> limited by the installed software.
+>
+> You can use the Dockerfile as a starting point to create your own image with the necessary dependencies.
+
 1. Pull the image
 
 ```shell
@@ -84,7 +92,7 @@ docker run -d \
 > [!TIP]
 > Use the [pre-made docker compose file](docker-compose.yml) as your starting point.
 
-**The Prometheus metrics are exposed under: `host:port/metrics`**
+**The Prometheus metrics are now exposed under: `host:port/metrics`**
 
 ## Configuration
 
@@ -111,10 +119,18 @@ port: 8080
 
 # A list of all commands to execute and parse
 targets:
-  # The name of the command. This will be a label in Prometheus.
+  # The name of the target. This will be part of the metric name
   - name: echo
-    # A shell command (Windows cmd, Linux: Bash)
-    command: echo 2
+    # A list of shell commands and additional labels
+    commands:
+      # The shell command to execute
+      - exec: echo '42'
+        # Additional labels for the metric
+        labels:
+          label1: value1
+          # You can use named groups from the RegEx to template the label value
+          label2: "Wrapped result {result}"
+
     # Specify the RegEx to parse the standard output of the command
     # The regex must include at least one named group (which needs to be specified below)
     # which is used to extract a numeric value from the command output
@@ -142,7 +158,7 @@ This tool uses these crates and other dependencies.
 - actix-web - MIT - [GitHub](https://github.com/actix/actix-web)
 - prometheus-client - MIT - [GitHub](https://github.com/prometheus/client_rust)
 - serde - MIT - [GitHub](https://github.com/serde-rs/serde)
-- serde_yaml - MIT - [GitHub](https://github.com/dtolnay/serde-yaml)
+- serde_yml - MIT - [GitHub](https://github.com/sebastienrousseau/serde_yml)
 - duration-string - MIT [GitHub](https://github.com/RonniSkansing/duration-string)
 - shellexpand - MIT - [GitLab](https://gitlab.com/ijackson/rust-shellexpand)
 - simple_logger - MIT - [GitHub](https://github.com/borntyping/rust-simple_logger)
