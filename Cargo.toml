@@ -1,6 +1,6 @@
 [package]
 name = "PrometheusPeriodicCommands"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 repository = "https://github.com/JannesStroehlein/PrometheusPeriodicCommands"
 
@@ -8,7 +8,7 @@ repository = "https://github.com/JannesStroehlein/PrometheusPeriodicCommands"
 actix-web = "4"
 prometheus-client = "0.22.3"
 serde = { version = "1.0.216", features = ["derive"] }
-serde_yaml = "0.9.34"
+serde_yml = "0.0.12"
 duration-string = { version = "0.4.0", features = ["serde"] }
 shellexpand = "3.0"
 log = { version = "0.4.22", features = ["max_level_debug", "release_max_level_info"] }

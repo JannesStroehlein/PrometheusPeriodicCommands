@@ -53,7 +53,7 @@ pub fn read_cfg(cli_args: &CliArgs) -> Result<schema::Schema, String> {
 
     let file_str = String::from_utf8(file_buf).expect("Could not read the file contents");
 
-    let mut read_config: schema::Schema = match serde_yaml::from_str(&file_str) {
+    let mut read_config: schema::Schema = match serde_yml::from_str(&file_str) {
         Ok(x) => x,
         Err(err) => return Err(err.to_string()),
     };
@@ -79,6 +79,7 @@ pub fn read_cfg(cli_args: &CliArgs) -> Result<schema::Schema, String> {
 
     validate_config_labels(&read_config);
     validate_config_regex(&read_config);
+    validate_config_command_labels(&read_config);
 
     Ok(read_config)
 }
@@ -137,7 +138,7 @@ fn explore_config_file_paths() -> String {
 /// If a name in the config file contains any illegal character according to
 /// https://prometheus.io/docs/concepts/data_model/
 fn validate_config_labels(config: &Schema) {
-    let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
+    let re = Regex::new(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$").unwrap();
     for target in &config.targets {
         if !re.is_match((&target.name).as_ref()) {
             panic!(
@@ -174,17 +175,46 @@ fn validate_config_regex(config: &Schema) {
     }
 }
 
+/// ## Panics
+/// If a label name for a target command does not match the Prometheus specification
+/// https://prometheus.io/docs/concepts/data_model/
+fn validate_config_command_labels(config: &Schema) {
+    let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap();
+
+    for target in &config.targets {
+        for command in target.commands.clone() {
+            for (label_name, _) in &command.labels {
+                if !re.is_match(label_name.as_ref()) {
+                    panic!(
+                        "Found illegal character in extra label for target '{}' command '{}'.
+                    '{}' did not match the RegEx specified by the Prometheus specifications.
+                    More information can be found here: https://prometheus.io/docs/concepts/data_model/",
+                        target.name, command.exec, label_name
+                    );
+                }
+                if label_name.starts_with("__") {
+                    panic!(
+                        "Found label name starting with '__' in target '{}', command '{}'.
+                        Prometheus reserves label names starting with '__' for internal use.",
+                        target.name, command.exec
+                    );
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::schema::CommandTarget;
+    use crate::config::schema::{Target, TargetCommand};
 
     #[test]
     fn validate_config_labels_valid() {
         let config = Schema {
-            targets: vec![CommandTarget {
+            targets: vec![Target {
                 name: "valid_name".to_string(),
-                command: "".to_string(),
+                commands: vec![],
                 regex: "".to_string(),
                 regex_named_group: "".to_string(),
                 success_exit_codes: vec![],
@@ -196,13 +226,14 @@ mod tests {
 
         validate_config_labels(&config);
     }
+
     #[test]
     #[should_panic]
     fn validate_config_labels_invalid() {
         let config = Schema {
-            targets: vec![CommandTarget {
+            targets: vec![Target {
                 name: "\"\"\"dasdassd-_3213$$212".to_string(),
-                command: "".to_string(),
+                commands: vec![],
                 regex: "".to_string(),
                 regex_named_group: "".to_string(),
                 success_exit_codes: vec![],
@@ -218,9 +249,9 @@ mod tests {
     #[test]
     fn validate_config_regex_valid() {
         let config = Schema {
-            targets: vec![CommandTarget {
+            targets: vec![Target {
                 name: "".to_string(),
-                command: "".to_string(),
+                commands: vec![],
                 regex: "(?<result>.*)".to_string(),
                 regex_named_group: "result".to_string(),
                 success_exit_codes: vec![],
@@ -237,9 +268,9 @@ mod tests {
     #[should_panic]
     fn validate_config_regex_invalid_regex() {
         let config = Schema {
-            targets: vec![CommandTarget {
+            targets: vec![Target {
                 name: "".to_string(),
-                command: "".to_string(),
+                commands: vec![],
                 regex: "(?<result.*)".to_string(),
                 regex_named_group: "result".to_string(),
                 success_exit_codes: vec![],
@@ -256,9 +287,9 @@ mod tests {
     #[should_panic]
     fn validate_config_regex_missing_group() {
         let config = Schema {
-            targets: vec![CommandTarget {
+            targets: vec![Target {
                 name: "".to_string(),
-                command: "".to_string(),
+                commands: vec![],
                 regex: "(.*)".to_string(),
                 regex_named_group: "result".to_string(),
                 success_exit_codes: vec![],
@@ -269,5 +300,72 @@ mod tests {
         };
 
         validate_config_regex(&config);
+    }
+
+    #[test]
+    #[should_panic]
+    fn validate_config_command_labels_invalid_regex() {
+        let config = Schema {
+            targets: vec![Target {
+                name: "".to_string(),
+                commands: vec![TargetCommand {
+                    exec: "".to_string(),
+                    labels: vec![("$$§21invalid.label".to_string(), "".to_string())],
+                }],
+                regex: "".to_string(),
+                regex_named_group: "".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        // This should panic
+        validate_config_command_labels(&config);
+    }
+
+    #[test]
+    #[should_panic]
+    fn validate_config_command_labels_invalid_prefix() {
+        let config = Schema {
+            targets: vec![Target {
+                name: "".to_string(),
+                commands: vec![TargetCommand {
+                    exec: "".to_string(),
+                    labels: vec![("__invalid_label".to_string(), "".to_string())],
+                }],
+                regex: "".to_string(),
+                regex_named_group: "".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        // This should panic
+        validate_config_command_labels(&config);
+    }
+
+    #[test]
+    fn validate_config_command_labels_valid() {
+        let config = Schema {
+            targets: vec![Target {
+                name: "".to_string(),
+                commands: vec![TargetCommand {
+                    exec: "".to_string(),
+                    labels: vec![("valid_label".to_string(), "".to_string())],
+                }],
+                regex: "".to_string(),
+                regex_named_group: "".to_string(),
+                success_exit_codes: vec![],
+                run_every: Default::default(),
+            }],
+            host: "".to_string(),
+            port: 0,
+        };
+
+        validate_config_command_labels(&config);
     }
 }
