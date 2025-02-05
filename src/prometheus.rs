@@ -36,7 +36,6 @@ impl TargetMetrics {
 
         let mut result_labels = vec![
             ("name".to_owned(), target.name.to_owned()),
-            ("command".to_owned(), command.exec.to_owned()),
             (
                 "exit_code".to_owned(),
                 execution_result.status.to_string().to_owned(),

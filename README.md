@@ -64,7 +64,7 @@ cargo install
 
 ### Docker Installation
 
-> [!warn]
+> [!IMPORTANT]
 > You most likely need to create your own Dockerfile to use this tool.
 > The included Dockerfile is only for building the tool with minimal dependencies.
 > That means the shell commands that are executed inside the container are very
